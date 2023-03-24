@@ -10,6 +10,7 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 import "./interfaces/ICamelotFactory.sol";
 import "./interfaces/ ICamelotRouter.sol";
+import "hardhat/console.sol";
 
 interface IWETH is IERC20 {
     function deposit() external payable;
@@ -25,9 +26,11 @@ contract LottoTax is ERC20, Ownable, ReentrancyGuard {
     uint128 public maxWallet;
     bool public swapEnabled = true;
     bool public inSwap;
+    uint16 private constant taxDenominator = 10000;
     uint256 public launchedAt;
     uint256 public launchedAtTimestamp;
-    bool private initialized;
+    bool public initialized;
+
     mapping(address => bool) public isTaxExempt;
     mapping(address => bool) public isTxLimitExempt;
     mapping(address => bool) public canAddLiquidityBeforeLaunch;
@@ -56,9 +59,8 @@ contract LottoTax is ERC20, Ownable, ReentrancyGuard {
     uint8 private rushPoolTax;
     uint8 private devOneTax;
     uint8 private devTwoTax;
-    uint8 private devThreeTax; // 256 - 8*21 = 184
-    uint184 private totalTax; // do i need to use type conversion here?
-
+    uint8 private devThreeTax;
+    uint184 private totalTax;
     //     Tax receivers
     address payable private marketingWallet;
     address payable public jackpotWallet;
@@ -248,7 +250,7 @@ contract LottoTax is ERC20, Ownable, ReentrancyGuard {
         address sender,
         uint256 amount
     ) internal returns (uint256) {
-        uint256 taxAmount = (amount * totalTax) / 100;
+        uint256 taxAmount = (amount * totalTax) / taxDenominator;
         _transfer(sender, address(this), taxAmount);
         return amount - taxAmount;
     }
