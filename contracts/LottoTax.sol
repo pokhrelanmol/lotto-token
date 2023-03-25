@@ -70,11 +70,11 @@ contract LottoTax is ERC20, Ownable, ReentrancyGuard {
     address payable private devThreeWallet;
 
     //      External contracts
-    ICamelotFactory private constant factory =
+    ICamelotFactory private immutable factory =
         ICamelotFactory(0x6EcCab422D763aC031210895C81787E87B43A652);
-    ICamelotRouter private constant swapRouter =
+    ICamelotRouter private immutable swapRouter =
         ICamelotRouter(0xc873fEcbd354f5A56E00E710B90EF4201db2448d);
-    IWETH private constant WETH =
+    IWETH private immutable WETH =
         IWETH(0x82aF49447D8a07e3bd95BD0d56f35241523fBab1);
 
     address public pair;
@@ -180,13 +180,12 @@ contract LottoTax is ERC20, Ownable, ReentrancyGuard {
     function swapBack() internal swapping {
         uint256 taxAmount = balanceOf(address(this));
         _approve(address(this), address(swapRouter), taxAmount);
-
+        console.log("Should swapback");
         address[] memory path = new address[](2);
         path[0] = address(this);
         path[1] = address(WETH);
 
         uint256 balanceBefore = address(this).balance;
-
         swapRouter.swapExactTokensForETHSupportingFeeOnTransferTokens(
             taxAmount,
             0,
@@ -195,7 +194,7 @@ contract LottoTax is ERC20, Ownable, ReentrancyGuard {
             address(0),
             block.timestamp
         );
-
+        console.log(address(this).balance);
         uint256 amountETH = address(this).balance - balanceBefore;
 
         uint256 amountETHJackpot = (amountETH * jackpotTax) / (totalTax);

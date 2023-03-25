@@ -191,5 +191,18 @@ describe("Lotto", function () {
             );
             expect(await lotto.balanceOf(pair)).lessThan(parseEther("10"));
         });
+        it("_lottoTransfer: Should trigger swapBack function if shouldSwapBack is true", async () => {
+            const { lotto, owner, otherAccount, dev1 } = await loadFixture(
+                deployLotto
+            );
+
+            await lotto.setSwapBackSettings(true); // enable swapBack(only owner can do this)
+            await lotto.launch(); // launch the lottery (only owner can do this)
+            await lotto.transfer(lotto.address, parseEther("0.3")); // amount of lotto contract holds
+            // Now with this varaibles we can simulate the swapback function on transfer
+            await expect(lotto.transfer(otherAccount.address, parseEther("1")))
+                .to.be.reverted;
+            // TODO:  I want to test this more throughly
+        });
     });
 });
