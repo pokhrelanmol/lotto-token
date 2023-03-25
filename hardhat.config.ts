@@ -7,9 +7,13 @@ const config: HardhatUserConfig = {
     networks: {
         hardhat: {
             forking: {
-                url: process.env.ARBITRUM_RPC_URL as string,
+                url: process.env.ARBITRUM_MAINNET_RPC_URL as string,
             },
         },
+        // arbitrum: {
+        //     url: process.env.ARBITRUM_MAINNET_RPC_URL as string,
+        //     accounts: [process.env.PRIVATE_KEY as string],
+        // },
     },
 };
 

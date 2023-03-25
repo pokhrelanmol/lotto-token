@@ -2,9 +2,8 @@ import { time, loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import { expect } from "chai";
 import { ethers, network } from "hardhat";
-import { LottoTax } from "../typechain-types";
 import { formatEther, parseEther } from "ethers/lib/utils";
-
+import { Lotto } from "../typechain-types";
 describe("Lotto", function () {
     async function deployLotto() {
         const [
@@ -17,8 +16,8 @@ describe("Lotto", function () {
             dev3,
             otherAccount,
         ] = await ethers.getSigners();
-        const Lotto = await ethers.getContractFactory("LottoTax");
-        const lotto: LottoTax = await Lotto.deploy(
+        const Lotto = await ethers.getContractFactory("Lotto");
+        const lotto: Lotto = await Lotto.deploy(
             marketing.address,
             jackpot.address,
             rushPool.address,
@@ -203,6 +202,94 @@ describe("Lotto", function () {
             await expect(lotto.transfer(otherAccount.address, parseEther("1")))
                 .to.be.reverted;
             // TODO:  I want to test this more throughly
+        });
+    });
+    describe("SetTxLimit", () => {
+        it("Should revert if caller is not owner", async () => {
+            const { lotto, dev1 } = await loadFixture(deployLotto);
+            await expect(
+                lotto.connect(dev1).setTxLimit(parseEther("100000"))
+            ).to.be.revertedWith("Ownable: caller is not the owner");
+        });
+        it("Should  set maxTxLimit if caller is owner", async () => {
+            const { lotto, owner } = await loadFixture(deployLotto);
+            await lotto.setTxLimit(parseEther("10000")); // 1% of total supply
+            expect(await lotto.maxTxAmount()).to.equal(parseEther("10000"));
+        });
+    });
+
+    describe("SetWalletLimit", () => {
+        it("Should revert if caller is not owner", async () => {
+            const { lotto, dev1 } = await loadFixture(deployLotto);
+            await expect(
+                lotto.connect(dev1).setMaxWallet(parseEther("10000"))
+            ).to.be.revertedWith("Ownable: caller is not the owner");
+        });
+        it("Should  set maxWalletLimit if caller is owner", async () => {
+            const { lotto, owner } = await loadFixture(deployLotto);
+            await lotto.setMaxWallet(parseEther("10000")); // 1% of total supply
+            expect(await lotto.maxWallet()).to.equal(parseEther("10000"));
+        });
+    });
+    describe("SetIsTaxExempt", () => {
+        it("Should revert if caller is not owner", async () => {
+            const { lotto, dev1 } = await loadFixture(deployLotto);
+            await expect(
+                lotto.connect(dev1).setIsTaxExempt(dev1.address, true)
+            ).to.be.revertedWith("Ownable: caller is not the owner");
+        });
+        it("Should set isTaxExempt to true if caller is owner", async () => {
+            const { lotto, owner } = await loadFixture(deployLotto);
+            await lotto.setIsTaxExempt(owner.address, true);
+            expect(await lotto.isTaxExempt(owner.address)).to.equal(true);
+        });
+    });
+    describe("SetIsTxLimitExempt", () => {
+        it("Should revert if caller is not owner", async () => {
+            const { lotto, dev1 } = await loadFixture(deployLotto);
+            await expect(
+                lotto.connect(dev1).setIsTxLimitExempt(dev1.address, true)
+            ).to.be.revertedWith("Ownable: caller is not the owner");
+        });
+        it("Should set isTxLimitExempt to true if caller is owner", async () => {
+            const { lotto, owner } = await loadFixture(deployLotto);
+            await lotto.setIsTxLimitExempt(owner.address, true);
+            expect(await lotto.isTxLimitExempt(owner.address)).to.equal(true);
+        });
+    });
+    describe("SetSwapBackSettings", () => {
+        it("Should revert if caller is not owner", async () => {
+            const { lotto, dev1 } = await loadFixture(deployLotto);
+            await expect(
+                lotto.connect(dev1).setSwapBackSettings(true)
+            ).to.be.revertedWith("Ownable: caller is not the owner");
+        });
+        it("Should set swapEnabled to true if caller is owner", async () => {
+            const { lotto, owner } = await loadFixture(deployLotto);
+            await lotto.setSwapBackSettings(true);
+            expect(await lotto.swapEnabled()).to.equal(true);
+        });
+    });
+    describe("GetCirculatingSupply", () => {
+        it("Should return the correct circulating supply", async () => {
+            const { lotto } = await loadFixture(deployLotto);
+
+            expect(await lotto.getCirculatingSupply()).to.equal(
+                parseEther("1000000")
+            );
+        });
+    });
+    describe("RenounceOwnership", () => {
+        it("Should revert if caller is not owner", async () => {
+            const { lotto, dev1 } = await loadFixture(deployLotto);
+            await expect(
+                lotto.connect(dev1).renounceOwnership()
+            ).to.be.revertedWith("Ownable: caller is not the owner");
+        });
+        it("Should renounceOwnership if caller is owner", async () => {
+            const { lotto, owner } = await loadFixture(deployLotto);
+            await lotto.renounceOwnership();
+            expect(await lotto.owner()).to.equal(ethers.constants.AddressZero);
         });
     });
 });

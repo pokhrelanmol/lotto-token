@@ -6,9 +6,11 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 import "./interfaces/ICamelotFactory.sol";
 import "./interfaces/ ICamelotRouter.sol";
+import "hardhat/console.sol";
 
 interface IWETH is IERC20 {
     function deposit() external payable;
@@ -16,99 +18,106 @@ interface IWETH is IERC20 {
     function withdraw(uint256) external;
 }
 
-contract Lotto is ERC20, Ownable {
+contract Lotto is ERC20, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using Address for address payable;
 
     uint256 public maxTxAmount;
     uint256 public maxWallet;
     bool public swapEnabled = true;
-
     bool public inSwap;
+    uint256 private constant taxDenominator = 10000;
+    uint256 public launchedAt;
+    uint256 public launchedAtTimestamp;
+    bool public initialized;
 
-    modifier swapping() {
-        inSwap = true;
-        _;
-        inSwap = false;
-    }
-
-    mapping(address => bool) public isFeeExempt;
+    mapping(address => bool) public isTaxExempt;
     mapping(address => bool) public isTxLimitExempt;
     mapping(address => bool) public canAddLiquidityBeforeLaunch;
 
-    uint256 private liquidityFee;
-    uint256 private jackpotFee;
-    uint256 private marketingFee;
-    uint256 private devFee;
-    uint256 private totalFee;
-    uint256 public feeDenominator = 10000;
+    //     Buy Tax or tax that will incur if you want to buy the token
+    uint256 public jackpotTaxBuy = 600;
+    uint256 public marketingTaxBuy = 200;
+    uint256 public rushPoolTaxBuy = 100;
+    uint256 public devOneTaxBuy = 100;
+    uint256 public devTwoTaxBuy = 100;
+    uint256 public devThreeTaxBuy = 100;
+    uint256 public totalTaxBuy = 1300;
+    //     Sell Tax or tax that will incur if you want to sell the token
+    uint256 public jackpotTaxSell = 600;
+    uint256 public marketingTaxSell = 200;
+    uint256 public rushPoolTaxSell = 100;
+    uint256 public devOneTaxSell = 100;
+    uint256 public devTwoTaxSell = 100;
+    uint256 public devThreeTaxSell = 100;
+    uint256 public totalTaxSell = 1300;
 
-    // Buy Fees
-    uint256 public liquidityFeeBuy = 100;
-    uint256 public jackpotFeeBuy = 500;
-    uint256 public marketingFeeBuy = 200;
-    uint256 public devFeeBuy = 200;
-    uint256 public totalFeeBuy = 1000;
-    // Sell Fees
-    uint256 public liquidityFeeSell = 100;
-    uint256 public jackpotFeeSell = 500;
-    uint256 public marketingFeeSell = 200;
-    uint256 public devFeeSell = 200;
-    uint256 public totalFeeSell = 1000;
-
-    // Fees receivers
-    address payable private liquidityIncentiveWallet;
+    // private variables
+    uint256 private jackpotTax;
+    uint256 private liquidityTax;
+    uint256 private marketingTax;
+    uint256 private rushPoolTax;
+    uint256 private devOneTax;
+    uint256 private devTwoTax;
+    uint256 private devThreeTax;
+    uint256 private totalTax;
+    //     Tax receivers
     address payable private marketingWallet;
     address payable public jackpotWallet;
-    address payable private devWalletOne;
-    address payable private devWalletTwo;
+    address payable private rushPoolWallet;
+    address payable private devOneWallet;
+    address payable private devTwoWallet;
+    address payable private devThreeWallet;
 
-    uint256 public launchedAt;
-    uint256 public launchedAtTimestamp;
-    bool private initialized;
-
+    //      External contracts
     ICamelotFactory private immutable factory =
         ICamelotFactory(0x6EcCab422D763aC031210895C81787E87B43A652);
     ICamelotRouter private immutable swapRouter =
         ICamelotRouter(0xc873fEcbd354f5A56E00E710B90EF4201db2448d);
     IWETH private immutable WETH =
         IWETH(0x82aF49447D8a07e3bd95BD0d56f35241523fBab1);
-    address private constant DEAD = 0x000000000000000000000000000000000000dEaD;
-    address private constant ZERO = 0x0000000000000000000000000000000000000000;
 
     address public pair;
 
+    // modifier
+    modifier swapping() {
+        inSwap = true;
+        _;
+        inSwap = false;
+    }
+
     constructor(
-        address _liquidityIncentiveWallet,
         address _marketingWallet,
         address _jackpotWallet,
-        address _devWalletOne,
-        address _devWalletTwo
+        address _rushPoolWallet,
+        address _devOneWallet,
+        address _devTwoWallet,
+        address _devThreeWallet
     ) ERC20("Lotto", "LOTTO") {
-        uint256 _totalSupply = 1_000_000 * 1e18;
-        maxTxAmount = (_totalSupply * 1) / 100; //1%
-        maxWallet = (_totalSupply * 1) / 100; //1%
-        liquidityIncentiveWallet = payable(_liquidityIncentiveWallet);
+        uint256 _totalSupply = 1_000_000 * 1e18; // 1 million
         marketingWallet = payable(_marketingWallet);
         jackpotWallet = payable(_jackpotWallet);
-        devWalletOne = payable(_devWalletOne);
-        devWalletTwo = payable(_devWalletTwo);
+        rushPoolWallet = payable(_rushPoolWallet);
+        devOneWallet = payable(_devOneWallet);
+        devTwoWallet = payable(_devTwoWallet);
+        devThreeWallet = payable(_devThreeWallet);
+        // set txAmount
+        maxTxAmount = (_totalSupply * 1) / 100;
+        maxWallet = (_totalSupply * 1) / 100; //1%
         canAddLiquidityBeforeLaunch[_msgSender()] = true;
         canAddLiquidityBeforeLaunch[address(this)] = true;
-        isFeeExempt[msg.sender] = true;
+        isTaxExempt[msg.sender] = true;
         isTxLimitExempt[msg.sender] = true;
-        isFeeExempt[address(this)] = true;
+        isTaxExempt[address(this)] = true;
         isTxLimitExempt[address(this)] = true;
         _mint(_msgSender(), _totalSupply);
     }
 
-    function initializePair() external onlyOwner {
-        require(!initialized, "Already initialized");
-        pair = factory.createPair(address(WETH), address(this));
+    function initailizePair() external onlyOwner {
+        require(!initialized, "Pair already initailized");
+        pair = factory.createPair(address(WETH), address(this)); // create weth - latto pair
         initialized = true;
     }
-
-    receive() external payable {}
 
     function transfer(
         address to,
@@ -141,19 +150,18 @@ contract Lotto is ERC20, Ownable {
         }
         checkWalletLimit(recipient, amount);
         checkTxLimit(sender, amount);
-
-        // Set Fees
+        // Set taxes
         if (sender == pair) {
-            buyFees();
+            buyTaxes();
         }
         if (recipient == pair) {
-            sellFees();
+            sellTaxes();
         }
         if (shouldSwapBack()) {
             swapBack();
         }
-        uint256 amountReceived = shouldTakeFee(sender)
-            ? takeFee(sender, amount)
+        uint256 amountReceived = shouldTakeTax(sender)
+            ? takeTax(sender, amount)
             : amount;
         _transfer(sender, recipient, amountReceived);
         return true;
@@ -172,13 +180,12 @@ contract Lotto is ERC20, Ownable {
     function swapBack() internal swapping {
         uint256 taxAmount = balanceOf(address(this));
         _approve(address(this), address(swapRouter), taxAmount);
-
+        console.log("Should swapback");
         address[] memory path = new address[](2);
         path[0] = address(this);
         path[1] = address(WETH);
 
         uint256 balanceBefore = address(this).balance;
-
         swapRouter.swapExactTokensForETHSupportingFeeOnTransferTokens(
             taxAmount,
             0,
@@ -187,59 +194,68 @@ contract Lotto is ERC20, Ownable {
             address(0),
             block.timestamp
         );
-
+        console.log(address(this).balance);
         uint256 amountETH = address(this).balance - balanceBefore;
 
-        uint256 amountETHLiquidity = (amountETH * liquidityFee) / (totalFee);
-        uint256 amountETHJackpot = (amountETH * jackpotFee) / totalFee;
-        uint256 amountETHMarketing = (amountETH * marketingFee) / totalFee;
-        uint256 amountETHDevOne = (amountETH * devFee) / (totalFee * 2);
-        uint256 amountETHDevTwo = amountETH -
-            amountETHLiquidity -
+        uint256 amountETHJackpot = (amountETH * jackpotTax) / (totalTax);
+        uint256 amountETHMarketing = (amountETH * marketingTax) / totalTax;
+        uint256 amountETHRushPool = (amountETH * rushPoolTax) / totalTax;
+        uint256 amountETHDevOne = (amountETH * devOneTax) / totalTax;
+        uint256 amountETHDevTwo = (amountETH * devTwoTax) / totalTax;
+        uint256 amountETHDevThree = amountETH -
             amountETHJackpot -
             amountETHMarketing -
-            amountETHDevOne;
-        liquidityIncentiveWallet.sendValue(amountETHLiquidity);
-        jackpotWallet.sendValue(amountETHJackpot);
-        marketingWallet.sendValue(amountETHMarketing);
-        devWalletOne.sendValue(amountETHDevOne);
-        devWalletTwo.sendValue(amountETHDevTwo);
+            amountETHRushPool -
+            amountETHDevOne -
+            amountETHDevTwo; // remaining ETH
+
+        payable(jackpotWallet).sendValue(amountETHJackpot);
+        payable(marketingWallet).sendValue(amountETHMarketing);
+        payable(rushPoolWallet).sendValue(amountETHRushPool);
+        payable(devOneWallet).sendValue(amountETHDevOne);
+        payable(devTwoWallet).sendValue(amountETHDevTwo);
+        payable(devThreeWallet).sendValue(amountETHDevThree);
     }
 
     function launched() internal view returns (bool) {
         return launchedAt != 0;
     }
 
-    function buyFees() internal {
-        liquidityFee = liquidityFeeBuy;
-        jackpotFee = jackpotFeeBuy;
-        marketingFee = marketingFeeBuy;
-        devFee = devFeeBuy;
-        totalFee = totalFeeBuy;
+    function buyTaxes() internal {
+        jackpotTax = jackpotTaxBuy;
+        marketingTax = marketingTaxBuy;
+        rushPoolTax = rushPoolTaxBuy;
+        devOneTax = devOneTaxBuy;
+        devTwoTax = devTwoTaxBuy;
+        devThreeTax = devThreeTaxBuy;
+        totalTax = totalTaxBuy;
     }
 
-    function sellFees() internal {
-        liquidityFee = liquidityFeeSell;
-        jackpotFee = jackpotFeeSell;
-        marketingFee = marketingFeeSell;
-        devFee = devFeeSell;
-        totalFee = totalFeeSell;
+    function sellTaxes() internal {
+        jackpotTax = jackpotTaxSell;
+        marketingTax = marketingTaxSell;
+        rushPoolTax = rushPoolTaxSell;
+        devOneTax = devOneTaxSell;
+        devTwoTax = devTwoTaxSell;
+        devThreeTax = devThreeTaxSell;
+        totalTax = totalTaxSell;
     }
 
-    function shouldTakeFee(address sender) internal view returns (bool) {
-        return !isFeeExempt[sender] && launched();
+    function shouldTakeTax(address sender) internal view returns (bool) {
+        return !isTaxExempt[sender] && launched();
     }
 
-    function takeFee(
+    function takeTax(
         address sender,
         uint256 amount
     ) internal returns (uint256) {
-        uint256 feeAmount = (amount * totalFee) / feeDenominator;
-        _transfer(sender, address(this), feeAmount);
-        return amount - feeAmount;
+        uint256 taxAmount = (amount * totalTax) / taxDenominator;
+        _transfer(sender, address(this), taxAmount);
+        return amount - taxAmount;
     }
 
     function checkWalletLimit(address recipient, uint256 amount) internal view {
+        address DEAD = 0x000000000000000000000000000000000000dEaD;
         if (
             recipient != owner() &&
             recipient != address(this) &&
@@ -261,6 +277,102 @@ contract Lotto is ERC20, Ownable {
         );
     }
 
+    /**
+     * ADMIN FUNCTIONS **
+     */
+    function launch() public onlyOwner {
+        require(launchedAt == 0, "Already launched");
+        launchedAt = block.number;
+        launchedAtTimestamp = block.timestamp;
+    }
+
+    function setBuyTaxes(
+        uint256 _jackpotTax,
+        uint256 _marketingTax,
+        uint256 _rushPoolTax,
+        uint256 _devOneTax,
+        uint256 _devTwoTax,
+        uint256 _devThreeTax
+    ) external onlyOwner {
+        jackpotTaxBuy = _jackpotTax;
+        marketingTaxBuy = _marketingTax;
+        rushPoolTaxBuy = _rushPoolTax;
+        devOneTaxBuy = _devOneTax;
+        devTwoTaxBuy = _devTwoTax;
+        devThreeTaxBuy = _devThreeTax;
+        totalTaxBuy =
+            _jackpotTax +
+            (_marketingTax) +
+            (_rushPoolTax) +
+            (_devOneTax) +
+            (_devTwoTax) +
+            (_devThreeTax);
+    }
+
+    function setSellTaxes(
+        uint256 _jackpotTax,
+        uint256 _marketingTax,
+        uint256 _rushPoolTax,
+        uint256 _devOneTax,
+        uint256 _devTwoTax,
+        uint256 _devThreeTax
+    ) external onlyOwner {
+        jackpotTaxSell = _jackpotTax;
+        marketingTaxSell = _marketingTax;
+        rushPoolTaxSell = _rushPoolTax;
+        devOneTaxSell = _devOneTax;
+        devTwoTaxSell = _devTwoTax;
+        devThreeTaxSell = _devThreeTax;
+        totalTaxSell =
+            _jackpotTax +
+            (_marketingTax) +
+            (_rushPoolTax) +
+            (_devOneTax) +
+            (_devTwoTax) +
+            (_devThreeTax);
+    }
+
+    function setTaxReceivers(
+        address _marketingWallet,
+        address _jackpotWallet,
+        address _rushPoolWallet,
+        address _devOneWallet,
+        address _devTwoWallet,
+        address _devThreeWallet
+    ) external onlyOwner {
+        marketingWallet = payable(_marketingWallet);
+        jackpotWallet = payable(_jackpotWallet);
+        rushPoolWallet = payable(_rushPoolWallet);
+        devOneWallet = payable(_devOneWallet);
+        devTwoWallet = payable(_devTwoWallet);
+        devThreeWallet = payable(_devThreeWallet);
+    }
+
+    function setMaxWallet(uint256 amount) external onlyOwner {
+        require(amount >= totalSupply() / 100); //1%
+        maxWallet = amount;
+    }
+
+    function setTxLimit(uint256 amount) external onlyOwner {
+        require(amount >= totalSupply() / 100); //1%
+        maxTxAmount = amount;
+    }
+
+    function setIsTaxExempt(address holder, bool exempt) external onlyOwner {
+        isTaxExempt[holder] = exempt;
+    }
+
+    function setIsTxLimitExempt(
+        address holder,
+        bool exempt
+    ) external onlyOwner {
+        isTxLimitExempt[holder] = exempt;
+    }
+
+    function setSwapBackSettings(bool _enabled) external onlyOwner {
+        swapEnabled = _enabled;
+    }
+
     // Stuck Balances Functions
     function rescueToken(address tokenAddress) external onlyOwner {
         IERC20(tokenAddress).safeTransfer(
@@ -275,88 +387,10 @@ contract Lotto is ERC20, Ownable {
     }
 
     function getCirculatingSupply() public view returns (uint256) {
+        address DEAD = 0x000000000000000000000000000000000000dEaD;
+        address ZERO = 0x0000000000000000000000000000000000000000;
         return totalSupply() - balanceOf(DEAD) - balanceOf(ZERO);
     }
 
-    /**
-     * ADMIN FUNCTIONS **
-     */
-    function launch() public onlyOwner {
-        require(launchedAt == 0, "Already launched");
-        launchedAt = block.number;
-        launchedAtTimestamp = block.timestamp;
-    }
-
-    function setBuyFees(
-        uint256 _liquidityFee,
-        uint256 _jackpotFee,
-        uint256 _marketingFee,
-        uint256 _devFee
-    ) external onlyOwner {
-        liquidityFeeBuy = _liquidityFee;
-        jackpotFeeBuy = _jackpotFee;
-        marketingFeeBuy = _marketingFee;
-        devFeeBuy = _devFee;
-        totalFeeBuy =
-            _liquidityFee +
-            (_jackpotFee) +
-            (_marketingFee) +
-            (_devFee);
-    }
-
-    function setSellFees(
-        uint256 _liquidityFee,
-        uint256 _jackpotFee,
-        uint256 _marketingFee,
-        uint256 _devFee
-    ) external onlyOwner {
-        liquidityFeeSell = _liquidityFee;
-        jackpotFeeSell = _jackpotFee;
-        marketingFeeSell = _marketingFee;
-        devFeeSell = _devFee;
-        totalFeeSell =
-            _liquidityFee +
-            (_jackpotFee) +
-            (_marketingFee) +
-            (_devFee);
-    }
-
-    function setFeeReceivers(
-        address _liquidityIncentiveWallet,
-        address _marketingWallet,
-        address _jackpotWallet,
-        address _devWalletOne,
-        address _devWalletTwo
-    ) external onlyOwner {
-        liquidityIncentiveWallet = payable(_liquidityIncentiveWallet);
-        marketingWallet = payable(_marketingWallet);
-        jackpotWallet = payable(_jackpotWallet);
-        devWalletOne = payable(_devWalletOne);
-        devWalletTwo = payable(_devWalletTwo);
-    }
-
-    function setMaxWallet(uint256 amount) external onlyOwner {
-        require(amount >= totalSupply() / 100);
-        maxWallet = amount;
-    }
-
-    function setTxLimit(uint256 amount) external onlyOwner {
-        require(amount >= totalSupply() / 100);
-        maxTxAmount = amount;
-    }
-
-    function setIsFeeExempt(address holder, bool exempt) external onlyOwner {
-        isFeeExempt[holder] = exempt;
-    }
-
-    function setIsTxLimitExempt(
-        address holder,
-        bool exempt
-    ) external onlyOwner {
-        isTxLimitExempt[holder] = exempt;
-    }
-
-    function setSwapBackSettings(bool _enabled) external onlyOwner {
-        swapEnabled = _enabled;
-    }
+    receive() external payable {}
 }
